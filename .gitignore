@@ -1,0 +1,10 @@
+*.py
+*.ipynb
+*.pt
+*.pth
+*.toml
+*.lock
+requirements*.txt
+__pycache__/
+.ipynb_checkpoints/
+.venv/

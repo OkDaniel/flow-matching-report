@@ -1,0 +1,435 @@
+/* Project 2 report (flow matching): static academic layout, no scripts.
+   Adapted from the Project 1 stylesheet. Light page, dark figures. */
+
+:root {
+  color-scheme: light;
+  --bg: #fcfcfb;
+  --surface: #ffffff;
+  --ink: #1a1a19;
+  --ink-2: #4a4945;
+  --ink-3: #6b6a65;
+  --rule: #e2e1dc;
+  --rule-strong: #c9c8c1;
+  --accent: #1c5cab;
+  --accent-soft: #eaf2fc;
+  --ok: #0f6b0f;
+  --bad: #b3261e;
+  --fig-bg: #0b101b;  /* matches the dark matplotlib style (SPEC §7) */
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --measure: 42rem;   /* prose line length, about 80 characters */
+  --wide: 64rem;      /* figures and tables */
+  --page-wide: 86rem; /* page width when the contents sidebar is shown */
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 17px; -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  line-height: 1.62;
+}
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+
+:where(a, [tabindex]):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+main:focus { outline: none; }
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: 0.6rem;
+  z-index: 10;
+  padding: 0.45rem 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
+
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+sup { line-height: 0; }
+
+/* ---------- header ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+.masthead-inner {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 3.2rem 1.25rem 2.2rem;
+}
+.kicker {
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.6rem;
+  font-weight: 600;
+}
+h1 {
+  font-size: clamp(1.9rem, 4.2vw, 2.7rem);
+  line-height: 1.15;
+  margin: 0 0 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  max-width: 40rem;
+  text-wrap: balance;
+}
+.byline {
+  font-family: var(--sans);
+  color: var(--ink-2);
+  margin: 0;
+  font-size: 0.98rem;
+}
+.byline strong { color: var(--ink); font-weight: 600; }
+
+/* Key results: a ruled summary strip, each value links to its section. */
+.key-results {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 2rem 0 0;
+  padding: 0.9rem 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.key-results li {
+  padding: 0.1rem 1.1rem;
+  border-left: 1px solid var(--rule);
+}
+.key-results li:first-child { border-left: 0; padding-left: 0; }
+.key-results .value {
+  display: block;
+  font-family: var(--sans);
+  font-size: 1.45rem;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--ink);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.key-results a.value:hover { color: var(--accent); text-decoration: underline; }
+.key-results .label {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.88rem;
+  color: var(--ink-2);
+  line-height: 1.4;
+  margin-top: 0.25rem;
+}
+
+/* ---------- layout ---------- */
+
+.page {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 0 1.25rem 4rem;
+}
+
+nav.toc {
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  border-bottom: 1px solid var(--rule);
+  padding: 1.6rem 0 1.4rem;
+}
+nav.toc h2 {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 0.6rem;
+  border: 0;
+  padding: 0;
+}
+nav.toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  columns: 2 16rem;
+  column-gap: 2rem;
+}
+nav.toc li { margin: 0; break-inside: avoid; }
+/* hanging numbers, so wrapped entries stay aligned */
+nav.toc a {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr);
+  align-items: baseline;
+  padding: 0.18rem 0;
+  color: var(--ink);
+  text-decoration: none;
+  line-height: 1.35;
+}
+nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+nav.toc .num { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+main section { padding-top: 2.4rem; }
+main section > *:not(figure):not(.table-wrap) { max-width: var(--measure); }
+
+h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0 0 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+  font-weight: 650;
+}
+h2 .num {
+  font-family: var(--sans);
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 0.15rem;
+}
+h3 {
+  font-size: 1.18rem;
+  margin: 1.8rem 0 0.6rem;
+  font-weight: 650;
+}
+h4 {
+  font-family: var(--sans);
+  font-size: 0.98rem;
+  margin: 1.3rem 0 0.4rem;
+  font-weight: 650;
+}
+p { margin: 0 0 1rem; }
+ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+li { margin-bottom: 0.35rem; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.84em;
+  background: #f1f0ec;
+  border-radius: 3px;
+  padding: 0.05em 0.25em;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  font-family: var(--sans);
+  font-size: 0.93rem;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 0.75rem 1rem;
+  border-radius: 0 4px 4px 0;
+  margin: 1.2rem 0;
+}
+.note strong { font-weight: 650; }
+
+.ok { color: var(--ok); font-weight: 600; }
+.bad { color: var(--bad); font-weight: 600; }
+
+/* ---------- math ---------- */
+
+math { font-size: 1.08em; }
+math[display="block"] {
+  margin: 1.1rem 0 1.2rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0;
+}
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 1.6rem 0 2rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--fig-bg);
+}
+figure video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  background: var(--fig-bg);
+}
+figure.medium { max-width: 46rem; }
+figure.small { max-width: 34rem; }
+figcaption {
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-top: 0.6rem;
+  max-width: var(--measure);
+}
+figcaption b { color: var(--ink); font-weight: 650; }
+.figure-full {
+  white-space: nowrap;
+  font-size: 0.86rem;
+  margin-left: 0.15rem;
+}
+
+/* ---------- tables ---------- */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 1.2rem 0 1.6rem;
+  break-inside: avoid;
+}
+table {
+  border-collapse: collapse;
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  min-width: 100%;
+  background: var(--surface);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+caption {
+  caption-side: top;
+  text-align: left;
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+  padding: 0 0 0.5rem;
+}
+caption b { color: var(--ink); font-weight: 650; }
+th, td {
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+thead th {
+  border-bottom: 2px solid var(--rule-strong);
+  font-weight: 650;
+  white-space: nowrap;
+}
+tbody th { font-weight: 650; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+tbody tr:last-child td, tbody tr:last-child th { border-bottom: 1px solid var(--rule-strong); }
+.nowrap, td.nowrap code { white-space: nowrap; }
+
+/* Wide numeric tables (step-count sweep): headers may wrap so numbers keep their space. */
+.wrap-head thead th { white-space: normal; vertical-align: bottom; }
+
+/* ---------- footer ---------- */
+
+footer {
+  border-top: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+footer .inner {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2.5rem;
+}
+footer p { max-width: var(--measure); }
+
+/* ---------- wide screens: contents as a sticky sidebar ---------- */
+
+@media screen and (min-width: 1200px) {
+  .masthead-inner,
+  footer .inner { max-width: var(--page-wide); }
+  .page {
+    max-width: var(--page-wide);
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr);
+    column-gap: 3rem;
+    align-items: start;
+  }
+  nav.toc {
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+    border-bottom: 0;
+    border-right: 1px solid var(--rule);
+    padding: 2.4rem 1.25rem 2rem 0;
+    font-size: 0.88rem;
+  }
+  nav.toc ol { columns: 1; }
+  nav.toc a { padding: 0.3rem 0; }
+  main { max-width: var(--wide); }
+}
+
+/* ---------- print / PDF ---------- */
+
+@page {
+  size: Letter;
+  margin: 16mm 16mm 18mm;
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-family: "Source Sans 3", Arial, sans-serif;
+    font-size: 8.5pt;
+    color: #6b6a65;
+  }
+}
+
+@media print {
+  html { font-size: 10.5pt; }
+  body { background: #fff; }
+  .skip-link, .figure-full, nav.toc, figure video { display: none; }
+  .masthead { background: #fff; border: 0; }
+  .masthead-inner { padding: 0 0 1rem; }
+  /* plain block flow: no grid or sticky containers for the page breaker */
+  .page, main, section {
+    display: block;
+    position: static;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+  }
+  .page, footer .inner { padding-left: 0; padding-right: 0; max-width: none; }
+  main section { padding-top: 1.2rem; }
+  /* about 80-90 characters per line at 10.5pt (Letter is 216mm wide) */
+  main section > *:not(figure):not(.table-wrap) { max-width: 160mm; }
+  h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+  figure, .table-wrap, .key-results, math[display="block"], .note { break-inside: avoid; }
+  figure img {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    width: auto;
+    max-width: 100%;
+    max-height: 200mm;
+    margin: 0 auto;
+    border-color: #ddd;
+  }
+  figure.medium img { max-width: 100%; }
+  figcaption { break-before: avoid; page-break-before: avoid; max-width: 160mm; font-size: 9pt; }
+  caption { font-size: 9pt; }
+  p, li { orphans: 3; widows: 3; }
+  tr { break-inside: avoid; }
+  thead { display: table-header-group; }
+  code { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  a { color: var(--ink); text-decoration: none; }
+  /* references and animation links stay visible as links in the PDF */
+  .refs a, .anim-links a { color: var(--accent); text-decoration: underline; }
+  .table-wrap { overflow: visible; }
+  math[display="block"] { overflow: visible; }
+  footer { border-top: 1px solid var(--rule); }
+  footer .inner { padding-bottom: 0; }
+}
