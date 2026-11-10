@@ -461,4 +461,6 @@ footer p { max-width: var(--measure); }
   details, details.anim-details, details.matrix { border: 0; padding: 0; background: none; }
   details > summary { display: none; }
   .key-results li { break-inside: avoid; }
+  /* the traceability matrix is longer than a page: let it flow instead of jumping to a new page */
+  details.matrix .table-wrap { break-inside: auto; }
 }
