@@ -1,23 +1,420 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Project 2: Flow Matching</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow Matching: Gaussian Noise → Torii · Project 2</title>
+<meta name="description" content="Project 2 report: a small flow-matching model on the CPU that moves 2D Gaussian noise into a ring and into a torii gate, with animations and an Euler step-count study.">
+<meta name="author" content="Daniel Jimenez">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500&family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="masthead">
-    <div class="masthead-inner">
-      <p class="kicker">Project 2</p>
-      <h1>Project 2: Flow Matching, report in progress</h1>
-      <p class="byline"><strong>Daniel Jimenez</strong></p>
-    </div>
-  </header>
-  <main class="page" id="main">
-    <section>
-      <p>This page will hold the report for Project 2: learning a flow from Gaussian noise to a 2D point cloud shaped like a torii gate. The full report is coming soon.</p>
-    </section>
-  </main>
+<a class="skip-link" href="#report">Skip to report</a>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="kicker">Project 2</p>
+    <h1>Flow Matching: Gaussian Noise → Torii (鳥居)</h1>
+    <p class="byline"><strong>Daniel Jimenez</strong> · Project 2, Parts 1 and 2 · November 2026</p>
+    <ul class="key-results" aria-label="Key results">
+      <li><a class="value" href="#p1-t3">1 vs 101</a> <span class="label">crossing pairs among 30 learned paths vs 30 straight training paths (out of 435)</span></li>
+      <li><a class="value" href="#p2-t3">0.233</a> <span class="label">torii TV at N = 1000 (lower is better) vs a noise floor of 0.130</span></li>
+      <li><a class="value" href="#p2-t3">4.18 ms</a> <span class="label">per network evaluation for 10,000 points; time grows linearly with N (R² = 0.9997)</span></li>
+      <li><a class="value" href="#setup">69.6 s</a> <span class="label">to train the 33,794-parameter torii model for 60,000 steps on 2 CPU threads</span></li>
+    </ul>
+    <figure class="hero screen-only">
+      <img src="animations/p2_transport.gif" width="1024" height="576" alt="Animation: 6,000 colored particles start as a Gaussian cloud, shrink toward the middle and then spread into the shape of a torii gate. Left panel shows the full view with gray velocity arrows, right panel a zoom with a vermilion torii outline.">
+      <figcaption><b>The learned transport.</b> The same 6,000 particles move along 120 Euler steps of my trained velocity field. Each color is fixed by the particle's starting angle and is only used for drawing. <a href="animations/p2_transport.gif">GIF (11.0 MB)</a> · <a href="animations/p2_transport.mp4">MP4 (3.5 MB)</a></figcaption>
+    </figure>
+    <figure class="print-only">
+      <img src="figures/p2_frames.png" alt="Six stills of the torii animation at t = 0, 0.2, 0.4, 0.6, 0.8 and 1.0.">
+      <figcaption><b>The learned transport in six stills</b> (the animation is on the web page and linked in Part 2, Task 2).</figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="page">
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#tldr"><span class="num">1</span> Summary</a></li>
+    <li><a href="#setup"><span class="num">2</span> Setup and reproducibility</a></li>
+    <li><a href="#background"><span class="num">3</span> Background</a></li>
+    <li><a href="#p1-t1"><span class="num">4</span> Part 1, Task 1: source, target, training pairs</a></li>
+    <li><a href="#p1-t2"><span class="num">5</span> Part 1, Task 2: model and training</a></li>
+    <li><a href="#p1-t3"><span class="num">6</span> Part 1, Task 3: generation</a></li>
+    <li><a href="#p2-t1"><span class="num">7</span> Part 2, Task 1: the torii target</a></li>
+    <li><a href="#p2-t2"><span class="num">8</span> Part 2, Task 2: animation</a></li>
+    <li><a href="#p2-t3"><span class="num">9</span> Part 2, Task 3: step-count trade-off</a></li>
+    <li><a href="#discussion"><span class="num">10</span> Discussion and limitations</a></li>
+    <li><a href="#references"><span class="num">11</span> References</a></li>
+    <li><a href="#ai-use"><span class="num">12</span> Use of generative AI</a></li>
+    <li><a href="#appendix"><span class="num">A</span> Traceability matrix</a></li>
+  </ol>
+</nav>
+
+<main id="report" tabindex="-1">
+
+<!-- ============================================================ 1 -->
+<section id="tldr">
+<h2><span class="num">1</span> Summary</h2>
+<p>In this project I trained a small neural network on my laptop's CPU to move points from a 2D Gaussian into a target shape, first a ring (Part 1) and then a torii gate that I designed myself (Part 2). The network never predicts where a point should end up. It only predicts a velocity <i>(v<sub>x</sub>, v<sub>y</sub>)</i> at a position and time, and new points are made by following that velocity with Euler steps. The learned paths are not the straight lines the model was trained on: among 30 paths only 1 pair crosses, against 101 for the training lines. For the torii, the histogram distance to the target drops from 0.991 with 1 Euler step to 0.241 with 50 steps and then stays at about 0.23, while the sampling time keeps growing in a straight line with the number of steps. The 0.102 that is left above the noise floor at 1000 steps comes from the learned field, not from the solver, and a bigger network removes about 62% of it.</p>
+</section>
+
+<!-- ============================================================ 2 -->
+<section id="setup">
+<h2><span class="num">2</span> Setup and reproducibility</h2>
+<p>Everything ran on the CPU of my laptop with 2 threads, the same thread count as the instructor's pilot. I didn't use the GPU, because the assignment is designed for the CPU and those are the timings I want to report. Every timing below was measured with the laptop plugged in and the power profile set to performance. The code (two notebooks, <code>utils.py</code>, saved checkpoints and a README) is in my Blackboard submission and is not public.</p>
+
+<div class="table-wrap">
+<table>
+<caption><b>Table 1. Machine and software.</b> From <code>run_info.json</code>, written by the notebooks.</caption>
+<tbody>
+<tr><th>CPU</th><td>11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz, 16 logical cores, 2 PyTorch threads used</td></tr>
+<tr><th>Device</th><td>cpu only (CUDA available: no), power: AC, profile: performance</td></tr>
+<tr><th>OS</th><td>Ubuntu 26.04.1 LTS, kernel 7.0.0-42-generic, x86_64</td></tr>
+<tr><th>Versions</th><td>Python 3.12.15, PyTorch 2.15.0+cpu, NumPy 2.5.4, Matplotlib 3.11.2</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><b>Model.</b> A multi-layer perceptron (a stack of fully connected layers) that maps <i>(x, y, t)</i> to <i>(v<sub>x</sub>, v<sub>y</sub>)</i>: 3 → 128 → 128 → 128 → 2, SiLU, with three hidden layers of 128 units. That is exactly 33,794 parameters, the same size as the instructor's model. SiLU is the smooth activation <i>z</i>·sigmoid(<i>z</i>). I picked it because a smooth network gives a smooth velocity field, so the sampled paths don't get sharp kinks. Time goes in as a plain number between 0 and 1, with no time embedding.</p>
+<p><b>Training.</b> Adam with learning rate 10<sup>−3</sup>, decayed to 10<sup>−5</sup> with a cosine schedule, batch size 256, 20,000 steps for the ring and 60,000 for the torii. Every step draws fresh noise, fresh target points and fresh times, so the model never sees the same example twice. Checkpoints are saved, so changing colors, plots or step counts never needs retraining.</p>
+
+<div class="table-wrap">
+<table>
+<caption><b>Table 2. Random seeds.</b> Every job has its own generator, so changing one never shifts the others.</caption>
+<thead><tr><th>Use</th><th>Seed</th></tr></thead>
+<tbody>
+<tr><th>Training (Part 1 / Part 2)</th><td>0 / 0 (robustness reruns: 1, 2)</td></tr>
+<tr><th>Figure noise (snapshots, quiver underlay, sweep paths)</th><td>100</td></tr>
+<tr><th>Evaluation noise for TV and the sweep</th><td>200 (Part 1); 200–204 (Part 2, 5 repeats)</td></tr>
+<tr><th>Reference target samples</th><td>300 (Part 1); 300–304 (Part 2)</td></tr>
+<tr><th>Second target sample for the noise floor</th><td>400 (Part 1); 400–404 (Part 2)</td></tr>
+<tr><th>Animation particles</th><td>500</td></tr>
+<tr><th>Interpolation-path pairs and crossing count</th><td>600</td></tr>
+<tr><th>Path straightness particles</th><td>101</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<caption><b>Table 3. Measured runtimes</b> (2 threads). Sampling times exclude rendering and trajectory storage.</caption>
+<thead><tr><th>Job</th><th class="num">Time</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><th>Train ring, 20,000 steps</th><td class="num">20.0 s</td><td>998 steps/s</td></tr>
+<tr><th>Train torii, 30,000 steps</th><td class="num">35.2 s</td><td>852 steps/s</td></tr>
+<tr><th>Train torii, 60,000 steps (main model)</th><td class="num">69.6 s</td><td>862 steps/s</td></tr>
+<tr><th>Train torii, seeds 1 and 2 (robustness)</th><td class="num">66.0 s, 66.8 s</td><td>60,000 steps each</td></tr>
+<tr><th>Train 4×256 model (capacity check)</th><td class="num">156.5 s</td><td>198,914 parameters, 383 steps/s</td></tr>
+<tr><th>Sample 10,000 torii points, N = 120</th><td class="num">494 ms</td><td>median of 7 runs, 4.12 ms per network evaluation</td></tr>
+<tr><th>Sample the 6,000 animation particles, N = 120</th><td class="num">0.28 s</td><td>median of 7 runs</td></tr>
+<tr><th>Render the main GIF / MP4</th><td class="num">33.8 s / 22.2 s</td><td>165 frames each</td></tr>
+<tr><th>Render the ripple GIF</th><td class="num">32.1 s</td><td>optional extra</td></tr>
+<tr><th>Whole Part 2 notebook from checkpoints</th><td class="num">419 s</td><td>Task 3 alone: 268 s</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Comparison with the instructor's pilot.</b> The assignment says the instructor's 33,794-parameter model trained for 30,000 steps in about 22 s on 2 threads of an ARM CPU. My torii model took 35.2 s for 30,000 steps on 2 threads of an Intel CPU, so it's in the same range. Mine is a bit slower per step partly because my target is sampled by rejection at every step (about 4 proposals and five polygon tests for every point it keeps). Like the assignment says, rendering the animation takes much longer than running the model: 33.8 s to render the GIF against 0.28 s to sample its particles.</p>
+</section>
+
+<!-- ============================================================ 3 -->
+<section id="background">
+<h2><span class="num">3</span> Background</h2>
+<p>Flow matching trains a network to be a velocity field that moves noise into data. I use the convention from the assignment that <i>t</i> = 0 is noise and <i>t</i> = 1 is data. For training, a noise point <i>x</i><sub>0</sub> and a data point <i>x</i><sub>1</sub> are paired at random, a time <i>t</i> is drawn uniformly between 0 and 1, and the network is asked to output the velocity of the straight line between them at the point <i>x<sub>t</sub></i>:</p>
+<math display="block"><mrow><msub><mi>x</mi><mi>t</mi></msub><mo>=</mo><mo>(</mo><mn>1</mn><mo>−</mo><mi>t</mi><mo>)</mo><msub><mi>x</mi><mn>0</mn></msub><mo>+</mo><mi>t</mi><msub><mi>x</mi><mn>1</mn></msub><mo>,</mo><mspace width="2em"/><mi>u</mi><mo>=</mo><msub><mi>x</mi><mn>1</mn></msub><mo>−</mo><msub><mi>x</mi><mn>0</mn></msub><mo>,</mo></mrow></math>
+<math display="block"><mrow><mi>ℒ</mi><mo>=</mo><mi mathvariant="double-struck">E</mi><mrow><mo>[</mo><msubsup><mrow><mo>‖</mo><msub><mi>v</mi><mi>θ</mi></msub><mo>(</mo><msub><mi>x</mi><mi>t</mi></msub><mo>,</mo><mi>t</mi><mo>)</mo><mo>−</mo><mo>(</mo><msub><mi>x</mi><mn>1</mn></msub><mo>−</mo><msub><mi>x</mi><mn>0</mn></msub><mo>)</mo><mo>‖</mo></mrow><mn>2</mn><mn>2</mn></msubsup><mo>]</mo></mrow><mo>.</mo></mrow></math>
+<p>To make new points, I start from fresh noise and follow the learned field with forward Euler steps, which means looking up the velocity at the current point, taking a small step in that direction and repeating:</p>
+<math display="block"><mrow><msub><mi>z</mi><mrow><mi>k</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>z</mi><mi>k</mi></msub><mo>+</mo><mi>Δ</mi><mi>t</mi><mspace width="0.2em"/><msub><mi>v</mi><mi>θ</mi></msub><mo>(</mo><msub><mi>z</mi><mi>k</mi></msub><mo>,</mo><msub><mi>t</mi><mi>k</mi></msub><mo>)</mo><mo>,</mo><mspace width="2em"/><msub><mi>z</mi><mn>0</mn></msub><mo>∼</mo><mi mathvariant="script">N</mi><mo>(</mo><mn>0</mn><mo>,</mo><mi>I</mi><mo>)</mo><mo>,</mo><mspace width="1em"/><msub><mi>t</mi><mi>k</mi></msub><mo>=</mo><mi>k</mi><mo>/</mo><mi>N</mi><mo>,</mo><mspace width="1em"/><mi>Δ</mi><mi>t</mi><mo>=</mo><mn>1</mn><mo>/</mo><mi>N</mi><mo>.</mo></mrow></math>
+<p>Each step is one network call, so the number of function evaluations (NFE) is just <i>N</i>. This straight-line path is the optimal-transport conditional path of Lipman et al. [1] with σ<sub>min</sub> = 0, and the same objective as rectified flow [2].</p>
+<p>The important idea is what the network can actually learn. The same input <i>(x, t)</i> shows up in many training pairs that want different velocities, but the network can only give one answer. Under a squared loss the best single answer is the average, the conditional mean</p>
+<math display="block"><mrow><msup><mi>v</mi><mo>*</mo></msup><mo>(</mo><mi>x</mi><mo>,</mo><mi>t</mi><mo>)</mo><mo>=</mo><mi mathvariant="double-struck">E</mi><mrow><mo>[</mo><msub><mi>x</mi><mn>1</mn></msub><mo>−</mo><msub><mi>x</mi><mn>0</mn></msub><mspace width="0.3em"/><mo>|</mo><mspace width="0.3em"/><msub><mi>x</mi><mi>t</mi></msub><mo>=</mo><mi>x</mi><mo>]</mo></mrow><mo>,</mo></mrow></math>
+<p>which the Flow Matching Guide [3] (eq. 4.10 and §4.5) shows is the minimizer of this loss and the velocity that actually carries the noise distribution to the data distribution. Two things follow from this. First, the loss can't go to zero, because even a perfect network still pays for the spread of the training velocities around their average. Second, the learned paths are not the training lines. The learned flow is an ordinary differential equation (ODE), and ODE solutions are unique, so two particles can never be at the same place at the same time. This is why Liu et al. [2] say flows "avoid crossing", while the random training lines cross all the time.</p>
+</section>
+
+<!-- ============================================================ 4 -->
+<section id="p1-t1">
+<h2><span class="num">4</span> Part 1, Task 1: source, target and training pairs</h2>
+<p>The source is a standard 2D Gaussian, <i>x</i><sub>0</sub> ∼ <i>N</i>(0, <i>I</i>). This means the x and y coordinates are each drawn from a normal distribution with mean 0 and standard deviation 1, independently. Almost all of these points land within about ±3 of the origin.</p>
+<p>For the target I picked a filled ring, an annulus with inner radius 0.6 and outer radius 1.0. To sample a point I draw an angle θ uniformly in [0, 2π) and a radius <i>r</i> = √<i>U</i> with <i>U</i> ∼ Uniform(0.36, 1.0), and the point is (<i>r</i> cos θ, <i>r</i> sin θ). The square root is important. If I drew <i>r</i> uniformly, the points would crowd near the inner edge, because the inner circle is shorter than the outer one but would get the same number of points. With the square root the points are spread evenly per unit area, which is what "area-uniform" means. Every target coordinate is inside ±1.0, and I plot the ring at ±1.2. I chose the ring because it's simple but still makes the model do something real: the Gaussian has most of its mass right in the middle, which is exactly where the ring has its hole.</p>
+<figure>
+  <img src="figures/p1_source_target.png" alt="Three dark panels: Gaussian source points at plus or minus 4, ring target points at plus or minus 1.2, and both overlaid at plus or minus 4." loading="lazy">
+  <figcaption><b>Figure 1. Source and target.</b> The Gaussian source at ±4.0, the ring target at ±1.2, and both together at ±4.0 so the real size difference is visible. The range of each panel is printed in its corner.</figcaption>
+</figure>
+<p>To make one training example I take a random Gaussian point <i>x</i><sub>0</sub> and a random ring point <i>x</i><sub>1</sub>, paired completely at random, draw <i>t</i> uniformly between 0 and 1, and build <i>x<sub>t</sub></i> and <i>u</i> from the equations in Section 3. <i>x<sub>t</sub></i> is the point a fraction <i>t</i> of the way along the straight line from <i>x</i><sub>0</sub> to <i>x</i><sub>1</sub>, and <i>u</i> is the velocity the network should output there.</p>
+<p><b>Why the velocity is constant.</b> <i>x<sub>t</sub></i> is affine in <i>t</i>, which just means "a constant plus <i>t</i> times another constant". I can rewrite it that way, <i>x<sub>t</sub></i> = <i>x</i><sub>0</sub> + <i>t</i>(<i>x</i><sub>1</sub> − <i>x</i><sub>0</sub>), and taking the derivative gives</p>
+<math display="block"><mrow><mfrac><mi>d</mi><mrow><mi>d</mi><mi>t</mi></mrow></mfrac><msub><mi>x</mi><mi>t</mi></msub><mo>=</mo><mfrac><mi>d</mi><mrow><mi>d</mi><mi>t</mi></mrow></mfrac><mrow><mo>[</mo><msub><mi>x</mi><mn>0</mn></msub><mo>+</mo><mi>t</mi><mo>(</mo><msub><mi>x</mi><mn>1</mn></msub><mo>−</mo><msub><mi>x</mi><mn>0</mn></msub><mo>)</mo><mo>]</mo></mrow><mo>=</mo><msub><mi>x</mi><mn>1</mn></msub><mo>−</mo><msub><mi>x</mi><mn>0</mn></msub><mo>=</mo><mi>u</mi><mo>,</mo></mrow></math>
+<p>with no <i>t</i> left in the answer. So a point on a training path moves in a straight line at the same speed the whole time, and that is why these are called straight paths. Figure 2 shows this: on each path the arrows at <i>t</i> = 0.25, 0.5 and 0.75 are exactly the same arrow.</p>
+<figure>
+  <img src="figures/p1_interpolation_paths.png" alt="Left: 20 gray straight segments from cyan noise points to tan ring points with pink dots and identical arrows along each. Right: three of the pairs enlarged." loading="lazy">
+  <figcaption><b>Figure 2. Training pairs.</b> 20 random (<i>x</i><sub>0</sub>, <i>x</i><sub>1</sub>) pairs (left) and 3 of them enlarged (right). Cyan is <i>x</i><sub>0</sub>, tan is <i>x</i><sub>1</sub>, pink dots are <i>x<sub>t</sub></i> at <i>t</i> = 0.25, 0.5, 0.75. Look at the arrows: on each segment the target velocity <i>x</i><sub>1</sub> − <i>x</i><sub>0</sub> is the same arrow at every <i>t</i>.</figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ 5 -->
+<section id="p1-t2">
+<h2><span class="num">5</span> Part 1, Task 2: model and training</h2>
+<p>The model, the pair construction and the training loop are written in PyTorch with standard layers and the Adam optimizer (details in Section 2). The loss I minimize is the squared distance summed over the two coordinates and averaged over the batch, which is the assignment's loss. It is 2 times PyTorch's mean-squared-error loss, because that one also averages over the two coordinates, and the factor of 2 doesn't change what the model learns. The ring model trained for 20,000 steps in 20.0 s.</p>
+<figure class="medium">
+  <img src="figures/p1_loss.png" alt="Training loss curve: raw loss in a faint line and its moving average in bold, dropping quickly and then flattening around 1.67." loading="lazy">
+  <figcaption><b>Figure 3. Training loss for the ring.</b> Raw loss per step (faint) and its exponential moving average (bold). It drops fast and then flattens at an EMA of 1.674, not at zero.</figcaption>
+</figure>
+<p><b>What the network predicts.</b> It predicts a velocity, two numbers <i>(v<sub>x</sub>, v<sub>y</sub>)</i>, for a given position and time. It never predicts where a point will end up. During training <i>x</i><sub>1</sub> is only used to build the target <i>u</i>, and at generation time the network gets nothing except the current point and <i>t</i>.</p>
+<p><b>Why the loss doesn't go to zero.</b> The same input <i>(x, t)</i> shows up in a lot of different training pairs. For example, a point at the origin at <i>t</i> = 0.5 could be halfway between a noise point on the left and a ring point on the right, or the other way around. Those two pairs want opposite velocities, but the network can only give one answer, so the best it can do is their average (the conditional mean from Section 3). Even a perfect network still pays for the spread of the training velocities around that average, so the loss has to level off above zero. The plateau measures how mixed up the random pairs are, not how good the model is, so I don't use the loss value as a quality score.</p>
+<p>Figure 4 shows this directly. At each probe point I kept the training pairs whose <i>x<sub>t</sub></i> landed within 0.05 of the probe and whose <i>t</i> was within 0.03 of the probe time. I had to draw a lot of fresh triples to get about 400 of them (1,800,000 for the first probe and 12,000,000 for the third).</p>
+<ul>
+  <li>At (0, 0) and <i>t</i> = 0.5 the arrows point in every direction. Their average is almost zero (length 0.03), and the network is only 0.02 away from it. The spread around the average is 2.59, so training examples near this point add about that much to the loss no matter how good the network is.</li>
+  <li>At (0.5, 0.3) and <i>t</i> = 0.7 most arrows point outward but still spread a lot (local variance 2.09). The average has length 0.39 and the network is 0.10 away from it.</li>
+  <li>At (−1.0, 0.8) and <i>t</i> = 0.25 most pairs are heading in toward the near side of the ring. The fan is narrower (local variance 1.12), the average is long (1.39), and the network is 0.09 away from it.</li>
+</ul>
+<p>In all three cases the network sits close to the average of the fan, not on any single training arrow. The final EMA loss of 1.674 is in the same range as these local variances, which makes sense, because the plateau is mostly this spread averaged over all the <i>(x, t)</i> that training visits.</p>
+<figure>
+  <img src="figures/p1_conditional_mean_fan.png" alt="Three panels, one per probe point, each with many thin gray arrows fanning out from the probe, a thick tan arrow for their average and a thick cyan arrow for the network output." loading="lazy">
+  <figcaption><b>Figure 4. The conditional-mean fan.</b> Thin gray arrows are training targets <i>x</i><sub>1</sub> − <i>x</i><sub>0</sub> that passed near each probe (<i>x</i>*, <i>t</i>*). Tan is their average and cyan is the trained network at that point. Look at how the cyan arrow matches the tan average and not any gray arrow. The spread of the gray arrows is the part of the loss no network can remove.</figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="p1-t3">
+<h2><span class="num">6</span> Part 1, Task 3: generating new points</h2>
+<p>Generation solves the ODE <i>dz/dt</i> = <i>v</i><sub>θ</sub>(<i>z</i>, <i>t</i>) from <i>t</i> = 0 to 1 with forward Euler, starting from fresh Gaussian noise. I use <i>N</i> = 120 steps, the same as the instructor. My sampler only takes three inputs: the model, the starting noise and the number of steps. There is no input for target points, so it can't look at where the points should go.</p>
+<figure>
+  <img src="figures/p1_snapshots.png" alt="Five panels of the same point cloud at t = 0, 0.25, 0.5, 0.75 and 1.0, all at plus or minus 3, plus a zoomed final panel with the ring outline." loading="lazy">
+  <figcaption><b>Figure 5. The generated cloud over time.</b> One batch of 5,000 noise points at five times, all at ±3.0 so the motion is comparable, plus a ±1.2 zoom of the final cloud with the ring outline. Look at the middle: the cloud first shrinks, and the hole only opens near the end.</figcaption>
+</figure>
+<p><b>How the field changes over time.</b> The velocity field is not fixed, it changes a lot with <i>t</i>. At <i>t</i> = 0 every arrow points toward the origin, and the speed grows with distance. This is actually what the theory says. At <i>t</i> = 0 the point <i>x<sub>t</sub></i> is just the noise point, which says nothing about which ring point it will be paired with, so the best guess is the average target minus the current point, E[<i>x</i><sub>1</sub>] − <i>x</i> = −<i>x</i>, because the ring is centered at the origin. On a 41×41 grid over ±2.5 the network's output at <i>t</i> = 0 is within 3.7% of −<i>x</i> on average. Later the arrows inside the hole point outward and the arrows outside the ring point inward, and the far-away speeds grow, because a point that is still far away late in time has to move fast to reach the ring by <i>t</i> = 1.</p>
+<figure>
+  <img src="figures/p1_velocity_field.png" alt="Four panels of arrows on a grid at t = 0, 0.33, 0.67 and 0.95, colored by speed, over a faint particle cloud." loading="lazy">
+  <figcaption><b>Figure 6. The learned velocity field</b> <i>v</i><sub>θ</sub>(<i>x</i>, <i>t</i>) at four times on a 21×21 grid over ±3.0. Arrows are colored by speed and drawn to one shared scale over the particle cloud at that time. Look at how the arrows go from "everything toward the center" to "push out of the hole".</figcaption>
+</figure>
+<p><b>Learned trajectories are not the training paths.</b> This is the main point of Task 3. The left panel of Figure 7 shows straight training segments from 30 noise points to random ring points. They cross each other a lot: 101 of the 435 possible pairs cross. The middle panel starts from the same 30 noise points but follows the learned field. Now the paths look rewired. Each particle goes to a nearby part of the ring instead of a random one, and only 1 of the 435 pairs cross. Where training lines cross, the network can't follow both, so it learns their average direction, and a particle that follows the average goes between them instead of through. The one crossing I counted doesn't break the no-crossing rule: the two particles pass that spot at <i>t</i> ≈ 0.95 and <i>t</i> ≈ 0.28, so they are never there at the same time. A 2D picture flattens time away. The same crossing is still there with 480 and 2,000 Euler steps, so it's not an Euler artifact.</p>
+<figure>
+  <img src="figures/p1_learned_vs_training_paths.png" alt="Left: 30 straight gray training segments crossing each other. Middle: 30 colored curved learned paths that do not cross. Right: median particle radius over time dipping and rising again." loading="lazy">
+  <figcaption><b>Figure 7. Training paths vs learned paths</b> from the same 30 starting points. Left: straight segments to random ring points (101 crossing pairs). Middle: learned 120-step trajectories (1 crossing pair). Right: radius over time, showing the inward dip before the paths move out to the ring.</figcaption>
+</figure>
+<p><b>Straight training paths don't give straight sampling paths.</b> For 2,000 fresh particles the mean path length is 0.826, but the mean straight-line distance from start to end (the chord) is only 0.518. So overall the paths are 1.60 times longer than straight lines, and the median ratio for a single particle is 1.83. For the training lines the ratio is exactly 1. The right panel of Figure 7 shows where the extra length comes from: 81.3% of particles first move inward and later move back out, and the median radius goes from 1.14 at <i>t</i> = 0 down to 0.63 at <i>t</i> = 0.65 and back up to 0.82 at <i>t</i> = 1. This matches the field: early on everything is pulled toward the center, and the hole only opens late.</p>
+<p><b>How close the final ring is.</b> To check the result at the distribution level I compare 10,000 generated points with 10,000 independent ring samples using the histogram total-variation distance (TV). Both clouds are counted on the same fixed 64×64 grid over ±1.5, plus one extra bin for anything outside the grid, and TV = ½ Σ|<i>p<sub>i</sub></i> − <i>q<sub>i</sub></i>|, where <i>p<sub>i</sub></i> and <i>q<sub>i</sub></i> are the shares of points in bin <i>i</i>. It's 0 for identical histograms and 1 when they don't overlap at all. Even two perfect samples don't score 0, because each has its own random noise, so I also compute this noise floor: the TV between two independent ring samples of the same size. The generated ring gets TV = 0.233 against a noise floor of 0.173. 93.8% of the points land inside the ring and 0% land outside ±1.5. The edges come out soft, which I think comes from the learned field and not from the number of steps. I test that properly in Part 2, Task 3.</p>
+<figure>
+  <img src="figures/p1_final_vs_target.png" alt="Generated ring points next to independent ring samples, with radius histograms of both." loading="lazy">
+  <figcaption><b>Figure 8. Generated vs target ring</b> (N = 120, 10,000 points each), with radius histograms. TV = 0.233 against a noise floor of 0.173. Look at the histogram edges at <i>r</i> = 0.6 and 1.0: they are soft instead of sharp.</figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ 7 -->
+<section id="p2-t1">
+<h2><span class="num">7</span> Part 2, Task 1: the torii target</h2>
+<p>For Part 2 I picked a torii gate (鳥居), the gate that stands at the entrance of a Shinto shrine. It is clearly different from the ring, and it's a much harder test for the model. It has thin straight bars, sharp corners and two small closed gaps between the beams, and a smooth network has trouble with all of those things. I built the shape myself out of five polygons, with <i>y</i> pointing up and every corner inside ±1.0: the kasagi (笠木, top beam), the gakuzuka (額束, short center post), the nuki (貫, lower tie beam) and two hashira (柱, pillars). The thinnest parts are 0.14 wide and the gap between the two beams is 0.24.</p>
+<div class="table-wrap">
+<table>
+<caption><b>Table 4. Torii polygons</b> (x, y). The area of the union is 0.979.</caption>
+<thead><tr><th>Part</th><th>Vertices</th></tr></thead>
+<tbody>
+<tr><th>kasagi 笠木 (top beam)</th><td>(−0.95, 0.74), (0.95, 0.74), (0.84, 0.58), (−0.84, 0.58)</td></tr>
+<tr><th>gakuzuka 額束 (center post)</th><td>(−0.07, 0.58), (0.07, 0.58), (0.07, 0.34), (−0.07, 0.34)</td></tr>
+<tr><th>nuki 貫 (tie beam)</th><td>(−0.76, 0.34), (0.76, 0.34), (0.76, 0.20), (−0.76, 0.20)</td></tr>
+<tr><th>hashira 柱 (left pillar)</th><td>(−0.56, 0.58), (−0.42, 0.58), (−0.40, −0.86), (−0.60, −0.86)</td></tr>
+<tr><th>hashira 柱 (right pillar)</th><td>(0.42, 0.58), (0.56, 0.58), (0.60, −0.86), (0.40, −0.86)</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Sampling rule.</b> I use rejection sampling: I draw a point uniformly in the square [−1, 1]² and keep it only if it lands inside at least one of the five polygons, otherwise I throw it away and draw again. Because every proposal is uniform over the square, the points that survive are uniform over the area of the shape. Where two polygons overlap (the pillars and the nuki), a point is kept only once, so the overlap doesn't get double density. The share of proposals that get kept should equal the area divided by 4, and it does: 0.245 measured against 0.245.</p>
+<p class="note"><strong>Source and permissions.</strong> Original geometric design created for this project from five polygons; no external images, fonts, or logos were used, so no permissions are required.</p>
+<figure>
+  <img src="figures/p2_target.png" alt="Left: 6,000 tan points filling a torii gate shape with its outline. Right: the five polygons with their Japanese and romaji names." loading="lazy">
+  <figcaption><b>Figure 9. The torii target.</b> Left: 6,000 area-uniform samples with the outline. Right: the five polygons and their names.</figcaption>
+</figure>
+<p><b>Training.</b> I trained the same model as in Part 1 with the torii sampler as the target, once for 30,000 steps and once for 60,000. The loss behaves the same way as in Part 1: it drops in the first thousand steps and then stays flat, ending at an EMA of 1.376 and 1.360. The loss barely moved, but the distribution check shows that training longer did help. With N = 1000 Euler steps (so the solver error is negligible), TV went from 0.256 ± 0.006 to 0.233 ± 0.006 over 5 evaluation seeds, and the share of points inside the torii went from 80.9% to 84.2%. The gain of 0.023 is much bigger than the seed-to-seed spread (0.006), so I use the 60,000-step model for everything after this. It is still far from the noise floor of 0.130: the bars come out thicker and blurrier, the gaps between the beams are partly filled in, and the thin gakuzuka doesn't show up as its own bar.</p>
+<figure class="medium">
+  <img src="figures/p2_loss.png" alt="Loss curves for the 30,000-step and 60,000-step torii runs, both flattening well above zero." loading="lazy">
+  <figcaption><b>Figure 10. Torii training loss</b> for the 30k and 60k runs. Both flatten well above zero, for the same reason as the ring.</figcaption>
+</figure>
+<figure>
+  <img src="figures/p2_train_length_check.png" alt="Three panels: final torii cloud from the 30k model, from the 60k model, and independent target samples." loading="lazy">
+  <figcaption><b>Figure 11. Does training longer help?</b> Final clouds from the 30k and 60k models with a near-exact solver (N = 1000) next to the target. TV drops from 0.256 to 0.233, but the edges stay soft.</figcaption>
+</figure>
+<figure>
+  <img src="figures/p2_triptych.png" alt="Three panels: Gaussian noise colored by angle at plus or minus 4, the generated torii in the same colors at plus or minus 1.2, and tan target samples at plus or minus 1.2." loading="lazy">
+  <figcaption><b>Figure 12. My version of the example figure on the assignment page.</b> Fresh noise colored by starting angle (±4.0), the same points after the learned flow (±1.2, same colors), and independent target samples (±1.2, tan). Colors track particle identity, they are not learned.</figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ 8 -->
+<section id="p2-t2">
+<h2><span class="num">8</span> Part 2, Task 2: animating the learned transport</h2>
+<p>The animation follows the same 6,000 particles (seed 500) along their 120-step Euler trajectories. There are 120 motion frames at 30 frames per second and then a 1.5 s hold at <i>t</i> = 1. The display frames don't line up exactly with the Euler steps, so for a frame between two steps I linearly interpolate between the two neighboring numerical states, the same as the instructor's demo. No extra network calls move the particles. The left panel is the full view at ±3.0 with gray arrows for <i>v</i><sub>θ</sub>(·, <i>t</i>) on a 15×15 grid, and the right panel zooms to ±1.2 with the torii outline in vermilion, the color torii are usually painted.</p>
+<figure class="screen-only">
+  <video controls muted loop playsinline preload="metadata" poster="figures/p2_frames.png" width="1280" height="720">
+    <source src="animations/p2_transport.mp4" type="video/mp4">
+  </video>
+  <figcaption><b>Video 1. Gaussian noise → torii</b> (MP4, 3.5 MB). The same animation is at the top of the page as a GIF.</figcaption>
+</figure>
+<p class="note anim-links"><strong>Direct links to the animation files:</strong> <a href="animations/p2_transport.gif">p2_transport.gif</a> (11.0 MB, 1024×576) · <a href="animations/p2_transport.mp4">p2_transport.mp4</a> (3.5 MB, 1280×720) · <a href="animations/p2_ripple.gif">p2_ripple.gif</a> (10.8 MB, optional extra).</p>
+<p class="print-only note anim-links"><strong>Animation links (open in a browser):</strong> <a href="https://okdaniel.github.io/flow-matching-report/animations/p2_transport.gif">okdaniel.github.io/flow-matching-report/animations/p2_transport.gif</a>, <a href="https://okdaniel.github.io/flow-matching-report/animations/p2_transport.mp4">…/p2_transport.mp4</a> and <a href="https://okdaniel.github.io/flow-matching-report/animations/p2_ripple.gif">…/p2_ripple.gif</a>. The page itself is at <a href="https://okdaniel.github.io/flow-matching-report/">okdaniel.github.io/flow-matching-report</a>.</p>
+<figure>
+  <img src="figures/p2_frames.png" alt="Six stills of the animation at t = 0, 0.2, 0.4, 0.6, 0.8 and 1.0, showing the colored cloud shrinking and then forming the torii." loading="lazy">
+  <figcaption><b>Figure 13. Stills from the animation</b> at <i>t</i> = 0, 0.2, …, 1.0, all at ±2.5 with the torii outline, for readers who can't play the animation.</figcaption>
+</figure>
+<p><b>How the colors are assigned.</b> Every particle gets one color from where it starts and keeps it for the whole animation. The color comes from the angle of the starting point, θ<sub>0</sub> = atan2(<i>y</i><sub>0</sub>, <i>x</i><sub>0</sub>), turned into a hue = (θ<sub>0</sub> + π) / 2π with full saturation, so going once around the origin goes once around the color wheel. Points that start on the left are red, at the bottom yellow-green, on the right cyan, and at the top blue and purple. Points that start close to the center (radius <i>r</i><sub>0</sub> &lt; 0.5) are mixed toward white, up to 85% white at the very center, because otherwise the dense middle of the Gaussian, where all the hues meet, turns into a muddy rainbow.</p>
+<p><b>Colors don't take part in training.</b> The colors are only added by the plotting code. They are computed once from <i>z</i><sub>0</sub>, they never go into the network and they are not part of the loss. The model only ever sees <i>(x, y, t)</i> and only outputs <i>(v<sub>x</sub>, v<sub>y</sub>)</i>. So the colors don't change where any particle goes, they just let me follow each particle.</p>
+<p><b>What the colors show.</b> Particles that start next to each other end up next to each other, so each part of the torii is filled by one connected wedge of the color wheel instead of a random mix. The two upper 45° sectors (blue and purple) send 76% and 75% of their particles to the kasagi. The two lower-left sectors feed the left pillar (61% and 80%) and the two lower-right sectors feed the right pillar (77% and 62%). The whitish particles from the center mostly fill the middle: 74% land in the nuki. So the map roughly keeps the angle: the top of the noise goes to the top of the gate, the bottom goes to the pillars, left stays left and right stays right. To me this is the clearest evidence that the network learned one smooth transport and not some random assignment of particles to target points.</p>
+<p><b>An extra: the ripple animation (purely visual).</b> Inspired by the ripple idea in the Xiaohongshu video, I made a second GIF from the same model, the same particles and the same trajectory. Only the color rule changes: hue = frac(<i>k</i> <i>r</i><sub>0</sub> − ω<i>t</i>) with <i>k</i> = 2 and ω = 3, where <i>r</i><sub>0</sub> is the starting distance from the origin and frac keeps the part after the decimal point. So the noise is painted in concentric rings that ripple outward as <i>t</i> grows. This is renderer-only, exactly like the angle colors: it has no effect on training or on where any particle goes. The rings stay clean bands while the cloud shrinks and stretches, and they end up as nested arches around the middle of the nuki, which shows again that the map is continuous.</p>
+<figure>
+  <img src="figures/p2_ripple_frames.png" alt="Three stills of the ripple animation: concentric rainbow rings in the noise at t = 0, tighter rings at t = 0.5, and nested arches inside the torii at t = 1." loading="lazy">
+  <figcaption><b>Figure 14. Ripple colors (renderer only)</b> at <i>t</i> = 0, 0.5 and 1 (the last panel is a ±1.2 zoom). Same particles and trajectory as the main animation.</figcaption>
+</figure>
+<details class="screen-only anim-details">
+  <summary>Play the ripple animation (GIF, 10.8 MB)</summary>
+  <figure>
+    <img src="animations/p2_ripple.gif" loading="lazy" width="921" height="518" alt="Animation: concentric rainbow rings of particles ripple outward while the cloud flows into the torii gate.">
+    <figcaption><b>Video 2. Ripple animation.</b> Purely visual, the colors never enter the model or the loss. <a href="animations/p2_ripple.gif">Direct link</a>.</figcaption>
+  </figure>
+</details>
+</section>
+
+<!-- ============================================================ 9 -->
+<section id="p2-t3">
+<h2><span class="num">9</span> Part 2, Task 3: the sampling trade-off</h2>
+<p><b>Setup.</b> I keep everything fixed except the number of Euler steps <i>N</i>. The weights are the 60,000-step model and don't change. The starting noise is fixed too: for each of 5 evaluation seeds (200 to 204) I draw one batch <i>z</i><sub>0</sub> of 10,000 points and reuse that exact batch for every <i>N</i>. So for a given seed, the cloud at <i>N</i> = 1 and the cloud at <i>N</i> = 1000 are made of the same particles, and the only thing that changes is how finely the path is cut into steps. I test <i>N</i> = 1, 2, 5, 10, 25, 50 and 120, plus <i>N</i> = 1000 as a high-accuracy reference. For every <i>N</i> I measure:</p>
+<ul>
+  <li><b>Sampling time</b> without rendering and without storing the trajectory: 2 threads, PyTorch's inference mode, one warm-up call, then the median and minimum of 7 timed runs.</li>
+  <li><b>NFE</b>, which is just <i>N</i>, and the time per NFE.</li>
+  <li><b>TV against the target</b>, on the same fixed 64×64 grid over ±1.5 plus one outside bin as in Part 1, compared with an independent target sample for each seed (seeds 300 to 304). I report the mean ± sd over the 5 seeds.</li>
+  <li><b>The noise floor</b>: TV between two independent target samples of the same size, 0.130 ± 0.005. This is what a perfect model would score.</li>
+  <li><b>In-shape share</b> (points inside the torii, the target has 100%) and <b>outside share</b> (points outside ±1.5, which land in the extra bin).</li>
+  <li><b>Step error</b>: TV between the cloud at <i>N</i> and the cloud at 1000, and the mean distance ‖<i>z<sub>N</sub></i> − <i>z</i><sub>1000</sub>‖ between where each particle ends up.</li>
+</ul>
+<p>The last one needs a comment, because the assignment says not to use point-by-point distances between independently sampled clouds. Point 17 of one random cloud has nothing to do with point 17 of another, so their distance means nothing. Here it's different: both clouds start from the same <i>z</i><sub>0</sub> and follow the same field, so particle <i>i</i> with <i>N</i> steps and particle <i>i</i> with 1000 steps are the same particle, solved with two different step sizes. Their distance is exactly the error the solver adds. The comparison with the target is still done only with distributions. With these numbers I split the error in two. The <b>step error</b> is the part that goes away with more steps, and the <b>model error</b> is what stays at <i>N</i> = 1000, measured as TV(1000 vs target) minus the noise floor.</p>
+
+<div class="table-wrap wrap-head">
+<table>
+<caption><b>Table 5. Step-count sweep</b> (10,000 points, 5 seeds, 60k-step model). Times are for the seed-200 batch on 2 threads. Noise floor TV = 0.1303 ± 0.0053.</caption>
+<thead><tr><th class="num">N</th><th class="num">NFE</th><th class="num">median ms</th><th class="num">min ms</th><th class="num">ms / NFE</th><th class="num">TV vs target (mean ± sd)</th><th class="num">TV vs N = 1000</th><th class="num">mean displacement vs N = 1000</th><th class="num">in-shape %</th><th class="num">outside ±1.5 %</th></tr></thead>
+<tbody>
+<tr><th class="num">1</th><td class="num">1</td><td class="num">4.3</td><td class="num">4.1</td><td class="num">4.29</td><td class="num nowrap">0.9910 ± 0.0008</td><td class="num">0.9931</td><td class="num">0.6451</td><td class="num">2.3</td><td class="num">0.00</td></tr>
+<tr><th class="num">2</th><td class="num">2</td><td class="num">8.1</td><td class="num">8.0</td><td class="num">4.06</td><td class="num nowrap">0.8427 ± 0.0034</td><td class="num">0.8312</td><td class="num">0.3998</td><td class="num">37.5</td><td class="num">0.00</td></tr>
+<tr><th class="num">5</th><td class="num">5</td><td class="num">22.3</td><td class="num">20.6</td><td class="num">4.47</td><td class="num nowrap">0.4693 ± 0.0071</td><td class="num">0.4577</td><td class="num">0.1472</td><td class="num">66.0</td><td class="num">0.00</td></tr>
+<tr><th class="num">10</th><td class="num">10</td><td class="num">43.0</td><td class="num">40.6</td><td class="num">4.30</td><td class="num nowrap">0.3437 ± 0.0067</td><td class="num">0.2772</td><td class="num">0.0726</td><td class="num">82.0</td><td class="num">0.00</td></tr>
+<tr><th class="num">25</th><td class="num">25</td><td class="num">101.3</td><td class="num">99.0</td><td class="num">4.05</td><td class="num nowrap">0.2550 ± 0.0044</td><td class="num">0.1351</td><td class="num">0.0279</td><td class="num">84.1</td><td class="num">0.00</td></tr>
+<tr><th class="num">50</th><td class="num">50</td><td class="num">211.1</td><td class="num">209.0</td><td class="num">4.22</td><td class="num nowrap">0.2411 ± 0.0058</td><td class="num">0.0890</td><td class="num">0.0135</td><td class="num">84.3</td><td class="num">0.00</td></tr>
+<tr><th class="num">120</th><td class="num">120</td><td class="num">494.3</td><td class="num">475.9</td><td class="num">4.12</td><td class="num nowrap">0.2364 ± 0.0057</td><td class="num">0.0538</td><td class="num">0.0052</td><td class="num">84.2</td><td class="num">0.00</td></tr>
+<tr><th class="num">1000 (ref.)</th><td class="num">1,000</td><td class="num">4,118.1</td><td class="num">4,049.7</td><td class="num">4.12</td><td class="num nowrap">0.2327 ± 0.0063</td><td class="num">0</td><td class="num">0</td><td class="num">84.2</td><td class="num">0.00</td></tr>
+</tbody>
+</table>
+</div>
+
+<figure>
+  <img src="figures/p2_sweep_clouds.png" alt="Grid of nine panels: final torii clouds for N = 1, 2, 5, 10, 25, 50, 120 and 1000 and an independent target sample, with TV and time printed on each." loading="lazy">
+  <figcaption><b>Figure 15. Final clouds for every N</b> from the same 10,000 starting points (seed 200), colored by starting angle, all at ±1.2 with a faint outline. TV and sampling time are printed on each panel. Look at how few steps shrink and blur the gate instead of scattering points.</figcaption>
+</figure>
+<figure>
+  <img src="figures/p2_sweep_metrics.png" alt="Four plots: TV versus N with a noise-floor band and the step-error curve, in-shape share versus N, sampling time versus NFE with a linear fit, and displacement versus N with a 1 over N guide." loading="lazy">
+  <figcaption><b>Figure 16. Sweep metrics.</b> (a) TV vs target falls and flattens at 0.233, above the noise-floor band, while the step error TV(N vs 1000) keeps falling. (b) In-shape share. (c) Sampling time vs NFE with the linear fit. (d) Mean displacement vs N = 1000 with a 1/N guide.</figcaption>
+</figure>
+<p><b>What changes with fewer steps.</b> Figure 15 shows that fewer steps don't make the torii noisy. They make it shrink toward the middle and blur. With <i>N</i> = 1 every particle ends up in almost the same spot: the center of that cloud is at (0.004, 0.172), the mean of the target is at (−0.000, 0.161), and the cloud's rms spread is only 0.028, compared with 0.676 for the target. That spot is just under the nuki, so 97.7% of the points land in the empty area there and TV is 0.991, close to the worst possible value of 1. With <i>N</i> = 2 the points form one blurry blob and the kasagi gets 0.0% of them (the target has 28.9%). With <i>N</i> = 5 the gate is recognizable but too small and thin, with 17.7% of the points in the two gaps between the beams. By <i>N</i> = 10, 82.0% of the points are inside the shape, but there is still too much mass in the gaps (8.9%). Points far outside never happen: the share outside ±1.5 is 0.00% at every <i>N</i>, so the extra TV bin is never used here.</p>
+<p>I think there is a simple reason few steps shrink the shape instead of throwing points everywhere. For straight paths the ideal velocity can be written as</p>
+<math display="block"><mrow><mi>v</mi><mo>(</mo><mi>x</mi><mo>,</mo><mi>t</mi><mo>)</mo><mo>=</mo><mfrac><mrow><mi mathvariant="double-struck">E</mi><mo>[</mo><msub><mi>x</mi><mn>1</mn></msub><mspace width="0.2em"/><mo>|</mo><mspace width="0.2em"/><msub><mi>x</mi><mi>t</mi></msub><mo>=</mo><mi>x</mi><mo>]</mo><mo>−</mo><mi>x</mi></mrow><mrow><mn>1</mn><mo>−</mo><mi>t</mi></mrow></mfrac><mo>,</mo></mrow></math>
+<p>which comes from the conditional velocity in Lipman et al. [1] (eqs. 20 and 21) and the conditional-mean identity [3]. Here E[<i>x</i><sub>1</sub> | <i>x<sub>t</sub></i> = <i>x</i>] is the field's best guess of where a particle at <i>x</i> will end up, an average over all the target points that are still possible from <i>x</i>. At <i>t</i> = 0 the noise says nothing about the target, so the guess is the mean of the whole torii, and one Euler step of size 1 lands exactly on it. That is the <i>N</i> = 1 collapse. With more steps the last step jumps onto a guess made at <i>t</i> = 1 − 1/<i>N</i>, which still averages over nearby target points. An average of points from two bars lands between them, in a gap or under the nuki, and an average can never leave the convex hull of the torii (the smallest convex region around it), which fits the 0% outside ±1.5. This argument is for the ideal field, and my network only approximates it, but the measured numbers follow it closely.</p>
+<figure>
+  <img src="figures/p2_sweep_paths.png" alt="The same 25 particle paths integrated with 1, 5, 25 and 120 Euler steps, overlaid; one-step paths are straight lines to one point, more steps follow smooth curves." loading="lazy">
+  <figcaption><b>Figure 17. Euler paths for different N.</b> The same 25 starting points with 1, 5, 25 and 120 steps. With one step every particle jumps straight to the same point. More steps follow the curved path more closely (mean endpoint distance to N = 120: 0.81, 0.17 and 0.03 for N = 1, 5, 25).</figcaption>
+</figure>
+<p><b>Where the curves flatten.</b> TV against the target drops fast at first: 0.991, 0.843, 0.469 and 0.344 for <i>N</i> = 1, 2, 5 and 10. Then it flattens: 0.255 at 25, 0.241 at 50, 0.236 at 120 and 0.233 at 1000. To see where it really stops improving, I look at the paired difference TV(<i>N</i>) − TV(1000) for each seed, where most of the sampling noise cancels because both use the same noise and the same target sample. It is 0.111 ± 0.002 at <i>N</i> = 10, 0.022 ± 0.005 at 25, 0.008 ± 0.003 at 50 and 0.004 ± 0.002 at 120. So the curve flattens between <i>N</i> = 25 and 50, and after that the gain is about the size of the seed-to-seed spread. A second metric, the sliced Wasserstein distance, tells the same story (0.3900 at <i>N</i> = 1, 0.0438 at 10, 0.0096 at 120 and 0.0088 at 1000).</p>
+<p>But the step error itself doesn't flatten. TV(<i>N</i> vs 1000) keeps falling (0.277, 0.135, 0.089 and 0.054 for <i>N</i> = 10, 25, 50, 120), and the mean displacement falls from 0.073 to 0.005, a log-log slope of −1.06. This is what Euler should do, because its error is proportional to the step size 1/<i>N</i> [3]. <i>N</i> = 1000 is accurate enough to be the reference: compared with <i>N</i> = 2000 the particles move only 0.00035 on average.</p>
+<p><b>Time and NFE.</b> Every Euler step is one network call, so NFE = <i>N</i>, and the sampling time follows NFE almost perfectly: 0.08 ms + 4.177 ms × NFE for 10,000 points (R² = 0.99975), with 4.05 to 4.47 ms per NFE for every <i>N</i>. This makes the trade-off easy to read. Going from <i>N</i> = 10 to 25 costs about 58 ms more and lowers TV by 0.089, while going from 120 to 1000 takes about 8.3 times longer and lowers TV by only 0.004.</p>
+<p><b>What is left at N = 1000.</b> Even with 1000 steps, TV is 0.233 ± 0.006 against a noise floor of 0.130 ± 0.005, so the model error is 0.102, and only 84.2% of the points land inside the torii. Figure 18 shows where. There is too little mass inside the bars, especially on the gakuzuka, and too much in the two gaps and in a thin band just outside the edges. Of the 15.8% of points outside the torii, 73% are less than 0.05 from an edge (median distance 0.025), so most of them form a soft halo around the bars. The thin gakuzuka is the worst part: it gets 1.7% of the points while the target has 3.4%.</p>
+<figure>
+  <img src="figures/p2_sweep_error_map.png" alt="Two histogram-difference maps on the TV grid with orange for too much mass and blue for too little: left, N = 10 compared with N = 1000; right, N = 1000 compared with the target." loading="lazy">
+  <figcaption><b>Figure 18. Where the errors are.</b> Histogram differences on the TV grid, 50,000 points each. Left: what 10 Euler steps change compared with 1000 (step error). Right: N = 1000 against the target (model error). Orange is too much mass, blue is too little.</figcaption>
+</figure>
+<p><b>Solver error or model error?</b> The assignment says "More sampling steps can reduce numerical error, but do not automatically fix an inaccurate learned field," and my numbers show exactly this. At <i>N</i> = 10 the step error and the model error are about the same size (0.111 against 0.102). At <i>N</i> = 120 the step error adds only 0.004 to TV, and the model error is about 28 times bigger. Because <i>N</i> = 1000 is so close to <i>N</i> = 2000, the 0.102 that's left is not a solver problem. It comes from the learned field.</p>
+<p>Two checks tell me more about that error. First, it isn't bad luck with one training run. Retraining with seeds 1 and 2 gives TV at <i>N</i> = 1000 of 0.247 ± 0.006 and 0.245 ± 0.006, so over the three training seeds it's 0.242 ± 0.008, and the gakuzuka gets 1.7%, 1.4% and 1.4% of the points. Every seed makes the same kind of mistake. Second, it is partly a capacity problem. A 4×256 model with 198,914 parameters (the size used in the inspiration video), trained with the same settings, reaches TV 0.169 ± 0.006 at <i>N</i> = 1000. That is only 0.039 above the floor, so about 62% of the model error goes away with a bigger network, and 91.1% of its points land inside the torii. Its final training loss (1.353) is almost the same as my model's (1.360), which is one more sign that the loss value is not a quality measure. It costs more, though: 22.2 ms per NFE instead of 4.12 (5.4 times). Still, at <i>N</i> = 120 it takes 2,666 ms and reaches TV 0.174, which is both faster and better than my model at <i>N</i> = 1000 (4,118 ms, TV 0.233). The capacity model is only evidence; everything else on this page uses the 33,794-parameter model.</p>
+<figure>
+  <img src="figures/p2_capacity_check.png" alt="Side-by-side N = 1000 torii clouds from the small model and from the 198,914-parameter model, with the target." loading="lazy">
+  <figcaption><b>Figure 19. Capacity check.</b> N = 1000 clouds from the same starting points for my 33,794-parameter model and the 198,914-parameter model trained the same way. Look at the center post and the pillar edges, which get sharper with the bigger model.</figcaption>
+</figure>
+<p>I think the part that is left even for the bigger model comes mostly from the target being hard to represent with a smooth field. The torii is a uniform density with hard edges, so to put every point exactly inside a bar the field has to change very sharply near the edges when <i>t</i> gets close to 1. A smooth network that takes <i>t</i> as a plain number can only approximate that, so the edges come out soft. The target samples themselves are not the problem, because I draw fresh exact samples from the polygons at every training step.</p>
+<p><b>Bin size.</b> The conclusions don't depend on the grid. With 32×32, 64×64 and 128×128 bins the noise floor changes a lot (0.069, 0.130 and 0.242), because smaller bins hold fewer points and have more sampling noise. But at every bin size <i>N</i> = 10 is clearly worse than <i>N</i> = 120 (0.274 vs 0.158, 0.344 vs 0.236, 0.451 vs 0.347), and <i>N</i> = 120 is within 0.005 of <i>N</i> = 1000.</p>
+<p><b>Overall</b>, the number of steps controls the solver error, and for this model it stops mattering at around <i>N</i> = 25 to 50. More steps after that still move the particles a little, but TV stays at about 0.23, which is 0.10 above the noise floor, because the learned field itself isn't accurate enough at the thin parts and the edges of the torii. A bigger network fixes about 62% of that, and more steps can't fix any of it.</p>
+</section>
+
+<!-- ============================================================ 10 -->
+<section id="discussion">
+<h2><span class="num">10</span> Discussion and limitations</h2>
+<p>The main thing I learned is that the network learns an average. Because the training pairs are random, the loss can't go to zero, the learned paths are curved and don't cross, and the error that's left at the end comes from how well that average field is learned, not from the sampler once it has enough steps. There are some limits to keep in mind when reading my numbers.</p>
+<ul>
+  <li><b>One target per part and one main seed.</b> The step-count study is for the torii only. I checked training seeds 1 and 2 for robustness, and they moved TV at <i>N</i> = 1000 by much less than the model error, but other shapes could behave differently.</li>
+  <li><b>Finite samples.</b> Every TV value has sampling noise. That's why I report mean ± sd over 5 seeds and always show the noise floor, which depends on the sample size (10,000) and the grid.</li>
+  <li><b>Bin choice.</b> The value of TV depends on the bin size, so a TV only means something next to its floor. The conclusions stayed the same at 32, 64 and 128 bins.</li>
+  <li><b>What histogram TV can't see.</b> It ignores structure smaller than one bin (about 0.047 wide), and it doesn't care how far a point is from where it should be, only which bin it's in. TV values also don't simply add up, so "model error = TV − floor" is a rough measure.</li>
+  <li><b>Timings are machine-dependent.</b> They are for my laptop, plugged in, on 2 threads. On another computer the numbers will be different, but the straight-line relation between time and NFE should stay the same. To get stable timings I had to stop the C memory allocator from giving the large buffers back to the operating system after every call; this changed only the speed, not any result.</li>
+</ul>
+</section>
+
+<!-- ============================================================ 11 -->
+<section id="references">
+<h2><span class="num">11</span> References</h2>
+<ol class="refs">
+  <li>Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, M. Le. <i>Flow Matching for Generative Modeling.</i> ICLR 2023. <a href="https://arxiv.org/abs/2210.02747">arXiv:2210.02747</a>.</li>
+  <li>X. Liu, C. Gong, Q. Liu. <i>Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow.</i> 2022. <a href="https://arxiv.org/abs/2209.03003">arXiv:2209.03003</a>.</li>
+  <li>Y. Lipman, M. Havasi, P. Holderrieth, N. Shaul, M. Le, B. Karrer, R. T. Q. Chen, D. Lopez-Paz, H. Ben-Hamu, I. Gat. <i>Flow Matching Guide and Code.</i> 2024. <a href="https://arxiv.org/abs/2412.06264">arXiv:2412.06264</a>.</li>
+  <li>The course instructor's demo video on the Project 2 page, and the linked Xiaohongshu inspiration video "flow matching: straightening the generation path" (visual inspiration only; no footage, logos or music were used).</li>
+</ol>
+</section>
+
+<!-- ============================================================ 12 -->
+<section id="ai-use">
+<h2><span class="num">12</span> Use of generative AI</h2>
+<p>I used generative AI tools (Claude and Claude Code, and Gemini for summarizing the reference videos) for planning, coding assistance and drafting. I reviewed, ran and understood all of the code and all of the results, as the course policy asks.</p>
+</section>
+
+<!-- ============================================================ A -->
+<section id="appendix">
+<h2><span class="num">A</span> Traceability matrix</h2>
+<p>Where each requirement of the assignment is answered. Notebook sections refer to the submitted <code>part_1.ipynb</code> and <code>part_2.ipynb</code>.</p>
+<details class="matrix">
+<summary>Show the requirement → evidence table</summary>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Assignment requirement</th><th>Notebook</th><th>Figure / number</th><th>Section</th></tr></thead>
+<tbody>
+<tr><td>P1 T1: Gaussian source; simple target; sampling rule and coordinate scale</td><td>part_1, Task 1</td><td>Fig. 1</td><td><a href="#p1-t1">4</a></td></tr>
+<tr><td>P1 T1: random pairs, uniform <i>t</i>, <i>x<sub>t</sub></i> and <i>u</i></td><td>part_1, Task 1</td><td>Fig. 2</td><td><a href="#p1-t1">4</a></td></tr>
+<tr><td>P1 T1: visualize paths; explain constant velocity</td><td>part_1, Task 1</td><td>Fig. 2 + derivation</td><td><a href="#p1-t1">4</a></td></tr>
+<tr><td>P1 T2: MLP, pair construction, training loop in PyTorch</td><td>utils.py, part_1, Task 2</td><td>33,794 parameters</td><td><a href="#setup">2</a>, <a href="#p1-t2">5</a></td></tr>
+<tr><td>P1 T2: plot the loss; what is predicted; why it doesn't go to 0</td><td>part_1, Task 2</td><td>Figs. 3, 4; local variances</td><td><a href="#p1-t2">5</a></td></tr>
+<tr><td>P1 T3: Euler from fresh noise, no endpoints given</td><td>part_1, Task 3</td><td>sampler inputs (model, noise, N)</td><td><a href="#p1-t3">6</a></td></tr>
+<tr><td>P1 T3: point cloud at several times</td><td>part_1, Task 3</td><td>Fig. 5</td><td><a href="#p1-t3">6</a></td></tr>
+<tr><td>P1 T3: velocity field at selected times</td><td>part_1, Task 3</td><td>Fig. 6</td><td><a href="#p1-t3">6</a></td></tr>
+<tr><td>P1 T3: learned trajectories vs straight training paths</td><td>part_1, Task 3</td><td>Fig. 7; crossings 1 vs 101; length/chord 1.60</td><td><a href="#p1-t3">6</a></td></tr>
+<tr><td>P2 T1: target different from Part 1; how points are sampled; source and permissions</td><td>part_2, Task 1</td><td>Fig. 9, Table 4, provenance note</td><td><a href="#p2-t1">7</a></td></tr>
+<tr><td>P2 T2: same particles animated from noise to shape</td><td>part_2, Task 2</td><td>p2_transport.gif / .mp4</td><td><a href="#p2-t2">8</a></td></tr>
+<tr><td>P2 T2: color scheme; how colors are assigned; no role in training</td><td>part_2, Task 2</td><td>color rule + text, Fig. 14 (extra)</td><td><a href="#p2-t2">8</a></td></tr>
+<tr><td>P2 T2: animation or working link, plus still frames</td><td>report</td><td>Video 1, direct links, Fig. 13</td><td><a href="#p2-t2">8</a></td></tr>
+<tr><td>P2 T3: fixed weights and noise; N = 1, 5, 10, 25, 50 (+2, 120, 1000)</td><td>part_2, Task 3</td><td>Fig. 15, Table 5</td><td><a href="#p2-t3">9</a></td></tr>
+<tr><td>P2 T3: sampling time without rendering; NFE</td><td>part_2, Task 3</td><td>Table 5, Fig. 16c</td><td><a href="#p2-t3">9</a></td></tr>
+<tr><td>P2 T3: distribution-level check, same grid, outside points counted</td><td>part_2, Task 3</td><td>TV + noise floor, Fig. 16a, bin check</td><td><a href="#p2-t3">9</a></td></tr>
+<tr><td>P2 T3: what changes with fewer steps vs model/target errors</td><td>part_2, Task 3</td><td>step vs model error, Figs. 17–19</td><td><a href="#p2-t3">9</a></td></tr>
+<tr><td>Record device, versions, architecture, settings, seeds, runtime</td><td>run_info.json</td><td>Tables 1–3</td><td><a href="#setup">2</a></td></tr>
+<tr><td>Code commented and runnable, README.txt</td><td>code/ (Blackboard only)</td><td>README.txt</td><td>not public</td></tr>
+<tr><td>report/page.pdf and site_info.txt; public repo with no code</td><td>report/ (Blackboard)</td><td>this page, leak check</td><td>not public</td></tr>
+</tbody>
+</table>
+</div>
+</details>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="inner">
+    <p>Daniel Jimenez · Project 2: flow matching on 2D point clouds · November 2026. Every number on this page comes from the result files written by my notebooks. The code is submitted privately on Blackboard and is not in this repository.</p>
+  </div>
+</footer>
 </body>
 </html>

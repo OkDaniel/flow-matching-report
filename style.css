@@ -334,6 +334,27 @@ tbody tr:last-child td, tbody tr:last-child th { border-bottom: 1px solid var(--
 /* Wide numeric tables (step-count sweep): headers may wrap so numbers keep their space. */
 .wrap-head thead th { white-space: normal; vertical-align: bottom; }
 
+/* ---------- animations, details, screen/print switches ---------- */
+
+.print-only { display: none; }
+figure.hero { margin: 1.6rem 0 0; max-width: 52rem; }
+details.anim-details, details.matrix {
+  margin: 1rem 0 1.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.6rem 0.9rem;
+  background: var(--surface);
+}
+details > summary {
+  cursor: pointer;
+  font-family: var(--sans);
+  font-weight: 600;
+  color: var(--accent);
+}
+details[open] > summary { margin-bottom: 0.6rem; }
+details figure { margin: 0.6rem 0 0.4rem; }
+details.matrix .table-wrap { margin: 0.4rem 0 0.2rem; }
+
 /* ---------- footer ---------- */
 
 footer {
@@ -432,4 +453,12 @@ footer p { max-width: var(--measure); }
   math[display="block"] { overflow: visible; }
   footer { border-top: 1px solid var(--rule); }
   footer .inner { padding-bottom: 0; }
+  /* GIFs and video can't play on paper: swap them for still figures */
+  .screen-only { display: none !important; }
+  .print-only { display: block; }
+  /* print the collapsible appendix open (Chrome 131+); the PDF script also opens it */
+  details::details-content { content-visibility: visible; display: block; }
+  details, details.anim-details, details.matrix { border: 0; padding: 0; background: none; }
+  details > summary { display: none; }
+  .key-results li { break-inside: avoid; }
 }
